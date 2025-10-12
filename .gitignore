@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+*.pyo
+*.p12
+syson_backup.sql
+exports/
+
