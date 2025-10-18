@@ -1,51 +1,56 @@
 # SysML v2 Diagram Generator
 
-A lightweight command-line tool that converts a subset of SysML v2 text into Graphviz diagrams. The renderer understands BusbySim-style packages, ports, items, actions, and state machines so the resulting graphics resemble the hand-crafted mock-ups commonly used in BusbySim documentation.
+A lightweight command-line tool that converts a subset of SysML v2 text into visual diagrams inspired by the BusbySim style. The parser understands packages, items, parts, ports, actions, and state machines so the generated graphics retain the structure of the original model.
 
 ## Features
-- Parses `package` bodies with attributes, BusbySim `item def` declarations, `part` blocks (including ports and actions), and `state` machines with transitions
-- Still understands simple SysML v2 `block`/`part`/`extends` syntax for legacy inputs
-- Emits Graphviz DOT by default, with optional PNG or SVG rendering when Graphviz is installed
-- Accepts input from files or standard input for easy integration with other tooling
+- Parses `package` bodies with attributes, BusbySim `item def` declarations, `part` blocks (including ports and actions), and `state` machines with transitions.
+- Keeps support for simple SysML v2 `block`/`part`/`extends` syntax used by legacy inputs.
+- Emits Graphviz DOT text and a fully self-contained SVG rendering without requiring the Graphviz CLI.
+- Accepts input from files or standard input for easy integration with other tooling.
 
 ## Requirements
 - Python 3.8+
-- Optional: [Graphviz](https://graphviz.org) for PNG/SVG rendering (DOT output works without it)
 
-## Installation
-No package installation is required. Clone the repository and run the script directly:
+## Usage
+Run the CLI directly from the repository:
 
 ```bash
 python3 diagram_generator.py --help
 ```
 
-## Usage
-Generate a DOT diagram from a SysML v2 file:
+### Generate DOT and SVG in one call
+
+By default the script prints the DOT description to standard output and writes an SVG file next to your SysML source (override the paths with the flags shown below):
 
 ```bash
-python3 diagram_generator.py --input path/to/model.sysml --diagram block --output diagrams/model.dot
+python3 diagram_generator.py --input test.sysml --svg-output light_switch.svg > light_switch.dot
 ```
 
-Render an SVG when Graphviz is available:
+The command above saves `light_switch.svg`, emits the DOT source to `stdout` (captured in `light_switch.dot`), and reports the output locations on `stderr`.
+
+### Custom output locations
 
 ```bash
-python3 diagram_generator.py --input path/to/model.sysml --format svg
+python3 diagram_generator.py --input path/to/model.sysml \
+    --diagram block \
+    --dot-output diagrams/model.dot \
+    --svg-output diagrams/model.svg
 ```
 
-### Quick start with the bundled example
+When `--dot-output` is omitted the DOT text is written to `stdout`. If `--svg-output` is omitted the SVG defaults to `<input_stem>_<diagram>.svg` (or `diagram_<diagram>.svg` when reading from `stdin`).
 
-This repository includes `test.sysml`, a BusbySim-generated model of a light switch. Render it to SVG (Graphviz required) for a diagram that mirrors the BusbySim house style:
+### Reading from standard input
 
 ```bash
-python3 diagram_generator.py --input test.sysml --format svg --output light_switch.svg
+cat model.sysml | python3 diagram_generator.py --input - --svg-output model.svg > model.dot
 ```
 
-Use `--format dot` if Graphviz is not installed—the script will emit DOT text instead of rendering an image. The DOT can be post-processed later once Graphviz is available.
+### Bundled example
 
-Read SysML v2 content from standard input:
+The repository ships with `test.sysml`, a BusbySim-generated light-switch model. Render it with:
 
 ```bash
-cat model.sysml | python3 diagram_generator.py --input - --output model.dot
+python3 diagram_generator.py --input test.sysml --svg-output light_switch.svg > light_switch.dot
 ```
 
-The resulting diagram nests packages, parts, ports, and state machines with color-coded panels, connects ports to their item definitions, and labels transitions with their guards. Unsupported constructs are ignored gracefully so the tool remains useful even with partial models.
+Open the SVG in a browser to inspect the nested panels for packages, parts, ports, and states. Unsupported constructs are ignored gracefully so the tool remains useful even with partial models.

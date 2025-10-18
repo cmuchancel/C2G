@@ -5,10 +5,7 @@ from __future__ import annotations
 
 import argparse
 import html
-import os
 import re
-import shutil
-import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -116,6 +113,15 @@ class BlockDefinition:
 class SysMLModel:
     packages: List[Package] = field(default_factory=list)
     blocks: Dict[str, BlockDefinition] = field(default_factory=dict)
+
+
+@dataclass
+class Box:
+    """Intermediate representation for SVG rendering."""
+
+    title: str
+    lines: List[str] = field(default_factory=list)
+    children: List["Box"] = field(default_factory=list)
 
 
 def _strip_comments(text: str) -> str:
@@ -637,30 +643,201 @@ def _build_block_graph(blocks: Dict[str, BlockDefinition], diagram_type: str) ->
     return "\n".join(lines)
 
 
+
 def build_dot_graph(model: SysMLModel, diagram_type: str) -> str:
     if model.packages:
         return _build_package_graph(model, diagram_type)
     return _build_block_graph(model.blocks, diagram_type)
 
 
-def write_output(dot_text: str, output_path: Path, fmt: str) -> None:
-    fmt = fmt.lower()
-    if fmt == "dot":
-        output_path.write_text(dot_text, encoding="utf-8")
-        return
-    dot_binary = "dot"
-    if not shutil.which(dot_binary):
-        raise RuntimeError("Graphviz 'dot' executable not found; install Graphviz or use --format dot")
-    proc = subprocess.run(
-        [dot_binary, f"-T{fmt}", "-o", os.fspath(output_path)],
-        input=dot_text.encode("utf-8"),
-        capture_output=True,
-        check=False,
+_CHAR_WIDTH = 7.2
+_LINE_HEIGHT = 18.0
+_TITLE_FONT_SIZE = 16
+_BODY_FONT_SIZE = 13
+_HEADER_HEIGHT = 28.0
+_BOX_PADDING_X = 14.0
+_BOX_PADDING_Y = 10.0
+_CHILD_GAP = 12.0
+_CANVAS_PADDING = 24.0
+_SECTION_GAP = 36.0
+_MIN_BOX_WIDTH = 160.0
+
+
+def _text_width(text: str) -> float:
+    return max(len(text), 1) * _CHAR_WIDTH
+
+
+def _format_attributes(attrs: List[Attribute]) -> List[str]:
+    return [attr.summary() for attr in attrs]
+
+
+def _port_to_box(port: Port) -> Box:
+    lines: List[str] = []
+    if port.direction or port.item_name:
+        descriptor = ' '.join(filter(None, [port.direction, port.item_name]))
+        lines.append(descriptor)
+    if port.item_type:
+        lines.append(f"defined by {port.item_type}")
+    lines.extend(_format_attributes(port.attributes))
+    return Box(title=f"port {port.name}", lines=lines)
+
+
+def _action_to_box(action: ActionDefinition) -> Box:
+    body_lines = [segment.strip() for segment in action.body.splitlines() if segment.strip()]
+    if not body_lines:
+        body_lines = ['<empty>']
+    return Box(title=f"action {action.name}", lines=body_lines)
+
+
+def _state_to_box(state: State) -> Box:
+    lines: List[str] = []
+    for entry in state.entries:
+        lines.append(f"entry {entry}")
+    for transition in state.transitions:
+        pieces = []
+        if transition.name:
+            pieces.append(f"{transition.name}:")
+        pieces.append(f"{transition.source} -> {transition.target}")
+        if transition.guard:
+            pieces.append(f"[{transition.guard}]")
+        lines.append(' '.join(pieces))
+    children = [_state_to_box(sub) for sub in state.substates]
+    return Box(title=f"state {state.name}", lines=lines, children=children)
+
+
+def _part_to_box(part: PartDefinition) -> Box:
+    lines = _format_attributes(part.attributes)
+    children: List[Box] = []
+    for port in part.ports:
+        children.append(_port_to_box(port))
+    for action in part.actions:
+        children.append(_action_to_box(action))
+    for state in part.states:
+        children.append(_state_to_box(state))
+    return Box(title=f"part {part.name}", lines=lines, children=children)
+
+
+def _item_to_box(item: ItemDefinition) -> Box:
+    return Box(title=f"item {item.name}", lines=_format_attributes(item.attributes))
+
+
+def _package_to_box(package: Package) -> Box:
+    children: List[Box] = []
+    for item in package.items:
+        children.append(_item_to_box(item))
+    for part in package.parts:
+        children.append(_part_to_box(part))
+    return Box(title=f"package {package.name}", lines=_format_attributes(package.attributes), children=children)
+
+
+@dataclass
+class LayoutResult:
+    box: Box
+    width: float
+    height: float
+    child_layouts: List[Tuple['LayoutResult', float, float]] = field(default_factory=list)
+
+
+def _layout_box(box: Box) -> LayoutResult:
+    child_layouts = [_layout_box(child) for child in box.children]
+    max_text_width = max([_text_width(box.title)] + [_text_width(line) for line in box.lines], default=_text_width(box.title))
+    max_child_width = max((child.width for child in child_layouts), default=0.0)
+    inner_width = max(max_text_width, max_child_width)
+    width = max(inner_width + 2 * _BOX_PADDING_X, _MIN_BOX_WIDTH)
+
+    content_top = _HEADER_HEIGHT + _BOX_PADDING_Y
+    line_area_height = len(box.lines) * _LINE_HEIGHT
+    child_positions: List[Tuple[LayoutResult, float, float]] = []
+
+    child_start_y = content_top + line_area_height
+    if box.lines and child_layouts:
+        child_start_y += _CHILD_GAP
+    elif not box.lines and child_layouts:
+        child_start_y += _BOX_PADDING_Y
+
+    current_y = child_start_y
+    for idx, child in enumerate(child_layouts):
+        child_positions.append((child, _BOX_PADDING_X, current_y))
+        current_y += child.height
+        if idx < len(child_layouts) - 1:
+            current_y += _CHILD_GAP
+
+    base_height = content_top + line_area_height
+    if child_layouts:
+        base_height = max(base_height, current_y)
+    height = max(base_height + _BOX_PADDING_Y, _HEADER_HEIGHT + 2 * _BOX_PADDING_Y + max(line_area_height, _LINE_HEIGHT))
+
+    return LayoutResult(box=box, width=width, height=height, child_layouts=child_positions)
+
+
+def _render_box(layout: LayoutResult, origin_x: float, origin_y: float, elements: List[str]) -> None:
+    rect_attrs = (
+        f"x=\"{origin_x:.1f}\" y=\"{origin_y:.1f}\" width=\"{layout.width:.1f}\" "
+        f"height=\"{layout.height:.1f}\" rx=\"6\" ry=\"6\""
     )
-    if proc.returncode != 0:
-        raise RuntimeError(
-            "Graphviz rendering failed: " + proc.stderr.decode("utf-8", errors="ignore")
+    elements.append(
+        f"<rect {rect_attrs} fill=\"#ffffff\" stroke=\"#333333\" stroke-width=\"1.4\" />"
+    )
+    elements.append(
+        f"<rect x=\"{origin_x:.1f}\" y=\"{origin_y:.1f}\" width=\"{layout.width:.1f}\" "
+        f"height=\"{_HEADER_HEIGHT:.1f}\" rx=\"6\" ry=\"6\" fill=\"#2f3b52\" />"
+    )
+    title_y = origin_y + _HEADER_HEIGHT / 2 + _TITLE_FONT_SIZE / 2 - 2
+    elements.append(
+        '<text '
+        f"x=\"{origin_x + _BOX_PADDING_X:.1f}\" y=\"{title_y:.1f}\" "
+        f"font-family=\"Helvetica\" font-size=\"{_TITLE_FONT_SIZE}\" fill=\"#ffffff\">"
+        f"{html.escape(layout.box.title)}</text>"
+    )
+
+    text_y = origin_y + _HEADER_HEIGHT + _BOX_PADDING_Y + _BODY_FONT_SIZE
+    for line in layout.box.lines:
+        elements.append(
+            '<text '
+            f"x=\"{origin_x + _BOX_PADDING_X:.1f}\" y=\"{text_y:.1f}\" "
+            f"font-family=\"Helvetica\" font-size=\"{_BODY_FONT_SIZE}\" fill=\"#2f3b52\">"
+            f"{html.escape(line)}</text>"
         )
+        text_y += _LINE_HEIGHT
+
+    for child_layout, child_x, child_y in layout.child_layouts:
+        _render_box(child_layout, origin_x + child_x, origin_y + child_y, elements)
+
+
+def build_svg_diagram(model: SysMLModel, diagram_type: str) -> str:
+    boxes: List[Box] = []
+    if model.packages:
+        for package in model.packages:
+            boxes.append(_package_to_box(package))
+    elif model.blocks:
+        for block in model.blocks.values():
+            lines = [f"part {name} : {type_name}" for name, type_name in block.parts]
+            boxes.append(Box(title=f"block {block.name}", lines=lines or ['<no parts>']))
+    else:
+        boxes.append(Box(title='SysML Diagram', lines=['<empty model>']))
+
+    layouts = [_layout_box(box) for box in boxes]
+    total_width = max((layout.width for layout in layouts), default=_MIN_BOX_WIDTH) + 2 * _CANVAS_PADDING
+    origins: List[Tuple[LayoutResult, float, float]] = []
+    current_y = _CANVAS_PADDING
+    for idx, layout in enumerate(layouts):
+        origins.append((layout, _CANVAS_PADDING, current_y))
+        current_y += layout.height
+        if idx < len(layouts) - 1:
+            current_y += _SECTION_GAP
+    total_height = current_y + _CANVAS_PADDING
+
+    elements: List[str] = [
+        f"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{total_width:.1f}\" height=\"{total_height:.1f}\" "
+        "viewBox=\"0 0 {0:.1f} {1:.1f}\">".format(total_width, total_height),
+        "<rect x=\"0\" y=\"0\" width=\"{0:.1f}\" height=\"{1:.1f}\" fill=\"#f5f6fa\"/>".format(total_width, total_height),
+    ]
+
+    for layout, origin_x, origin_y in origins:
+        _render_box(layout, origin_x, origin_y, elements)
+
+    elements.append('</svg>')
+    return '\n'.join(elements)
 
 
 def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
@@ -674,24 +851,20 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         help="Type of diagram to generate.",
     )
     parser.add_argument(
-        "--output",
-        "-o",
-        help="Output file path. Defaults to <input_stem>_<diagram>.<format>",
+        "--dot-output",
+        help="Path to write the Graphviz DOT description (use '-' for stdout; default: stdout).",
     )
     parser.add_argument(
-        "--format",
-        "-f",
-        choices=["dot", "png", "svg"],
-        default="dot",
-        help="Output format (Graphviz required for PNG/SVG).",
+        "--svg-output",
+        help="Path to write the SVG diagram (default: <input_stem>_<diagram>.svg).",
     )
     return parser.parse_args(argv)
-
 
 def _read_input(path: str) -> str:
     if path == "-":
         return sys.stdin.read()
     return Path(path).read_text(encoding="utf-8")
+
 
 
 def main(argv: Optional[Iterable[str]] = None) -> int:
@@ -701,22 +874,41 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     except OSError as exc:
         sys.stderr.write(f"Failed to read input file: {exc}\n")
         return 1
+
     model = parse_sysmlv2(source)
     if not model.packages and not model.blocks:
         sys.stderr.write("No SysML constructs were recognized in the input.\n")
+
     dot_text = build_dot_graph(model, args.diagram)
-    if args.output:
-        output_path = Path(args.output)
-    else:
-        suffix = args.format.lower()
-        stem = Path(args.input).stem if args.input != "-" else "diagram"
-        output_path = Path(f"{stem}_{args.diagram}.{suffix}")
+    svg_text = build_svg_diagram(model, args.diagram)
+
+    stem = Path(args.input).stem if args.input != '-' else 'diagram'
+    dot_destination = args.dot_output if args.dot_output is not None else '-'
+    svg_path = Path(args.svg_output) if args.svg_output else Path(f"{stem}_{args.diagram}.svg")
+
+    outputs: List[str] = []
+
     try:
-        write_output(dot_text, output_path, args.format)
-    except RuntimeError as exc:
-        sys.stderr.write(str(exc) + "\n")
+        if dot_destination == '-':
+            if dot_text:
+                sys.stdout.write(dot_text)
+                if not dot_text.endswith("\n"):
+                    sys.stdout.write("\n")
+            outputs.append('DOT -> stdout')
+        else:
+            dot_path = Path(dot_destination)
+            dot_path.parent.mkdir(parents=True, exist_ok=True)
+            dot_path.write_text(dot_text, encoding='utf-8')
+            outputs.append(f'DOT -> {dot_path.resolve()}')
+
+        svg_path.parent.mkdir(parents=True, exist_ok=True)
+        svg_path.write_text(svg_text, encoding='utf-8')
+        outputs.append(f'SVG -> {svg_path.resolve()}')
+    except OSError as exc:
+        sys.stderr.write(f"Failed to write output: {exc}\n")
         return 2
-    print(f"Diagram written to {output_path.resolve()}")
+
+    sys.stderr.write("; ".join(outputs) + "\n")
     return 0
 
 
