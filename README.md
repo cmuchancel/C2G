@@ -64,3 +64,13 @@ Run the bundled regression check to render `test.sysml` into both SVG and DOT ou
 ```
 
 The script exits with a non-zero status if either artifact cannot be written, making it suitable for quick smoke testing.
+
+### Print the exact test command
+
+If you just need the copy/pasteable invocation for manual testing, use the helper script to echo it to the terminal:
+
+```bash
+python3 print_test_command.py
+```
+
+It responds with the fully qualified `python3 diagram_generator.py --input …` command so you can run or share it directly.
