@@ -1,9 +1,10 @@
 # SysML v2 Diagram Generator
 
-A lightweight command-line tool that converts a subset of SysML v2 text into Graphviz diagrams. Use it to quickly visualize block definitions, part relationships, BusbySim-style item/port connections, and inheritance without leaving your editor.
+A lightweight command-line tool that converts a subset of SysML v2 text into Graphviz diagrams. The renderer understands BusbySim-style packages, ports, items, actions, and state machines so the resulting graphics resemble the hand-crafted mock-ups commonly used in BusbySim documentation.
 
 ## Features
-- Parses `block` declarations, `part` properties, BusbySim `item`/`port` constructs, and `extends` relationships from SysML v2 text
+- Parses `package` bodies with attributes, BusbySim `item def` declarations, `part` blocks (including ports and actions), and `state` machines with transitions
+- Still understands simple SysML v2 `block`/`part`/`extends` syntax for legacy inputs
 - Emits Graphviz DOT by default, with optional PNG or SVG rendering when Graphviz is installed
 - Accepts input from files or standard input for easy integration with other tooling
 
@@ -33,13 +34,13 @@ python3 diagram_generator.py --input path/to/model.sysml --format svg
 
 ### Quick start with the bundled example
 
-This repository includes `test.sysml`, a BusbySim-generated example of a light switch package. Generate a PNG diagram directly:
+This repository includes `test.sysml`, a BusbySim-generated model of a light switch. Render it to SVG (Graphviz required) for a diagram that mirrors the BusbySim house style:
 
 ```bash
-python3 diagram_generator.py --input test.sysml --format png --output light_switch.png
+python3 diagram_generator.py --input test.sysml --format svg --output light_switch.svg
 ```
 
-Use `--format dot` if Graphviz is not installed—the script will emit DOT text instead of rendering an image.
+Use `--format dot` if Graphviz is not installed—the script will emit DOT text instead of rendering an image. The DOT can be post-processed later once Graphviz is available.
 
 Read SysML v2 content from standard input:
 
@@ -47,4 +48,4 @@ Read SysML v2 content from standard input:
 cat model.sysml | python3 diagram_generator.py --input - --output model.dot
 ```
 
-The resulting diagram highlights part relationships with diamond arrows and inheritance with open arrows. Unsupported constructs are ignored gracefully so the tool remains useful even with partial models.
+The resulting diagram nests packages, parts, ports, and state machines with color-coded panels, connects ports to their item definitions, and labels transitions with their guards. Unsupported constructs are ignored gracefully so the tool remains useful even with partial models.
