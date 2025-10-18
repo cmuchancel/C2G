@@ -1,9 +1,9 @@
 # SysML v2 Diagram Generator
 
-A lightweight command-line tool that converts a subset of SysML v2 text into Graphviz diagrams. Use it to quickly visualize block definitions, part relationships, and inheritance without leaving your editor.
+A lightweight command-line tool that converts a subset of SysML v2 text into Graphviz diagrams. Use it to quickly visualize block definitions, part relationships, BusbySim-style item/port connections, and inheritance without leaving your editor.
 
 ## Features
-- Parses `block` declarations, `part` properties, and `extends` relationships from SysML v2 text
+- Parses `block` declarations, `part` properties, BusbySim `item`/`port` constructs, and `extends` relationships from SysML v2 text
 - Emits Graphviz DOT by default, with optional PNG or SVG rendering when Graphviz is installed
 - Accepts input from files or standard input for easy integration with other tooling
 
@@ -30,6 +30,16 @@ Render an SVG when Graphviz is available:
 ```bash
 python3 diagram_generator.py --input path/to/model.sysml --format svg
 ```
+
+### Quick start with the bundled example
+
+This repository includes `test.sysml`, a BusbySim-generated example of a light switch package. Generate a PNG diagram directly:
+
+```bash
+python3 diagram_generator.py --input test.sysml --format png --output light_switch.png
+```
+
+Use `--format dot` if Graphviz is not installed—the script will emit DOT text instead of rendering an image.
 
 Read SysML v2 content from standard input:
 

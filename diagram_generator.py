@@ -5,8 +5,9 @@ This module provides a lightweight command line interface that accepts a
 SysML v2 text file (as exported by SysON or authored manually) and produces a
 Graphviz representation of the block structure.  The goal is not to implement
 the entire SysML v2 language but to cover a pragmatic subset that captures
-block declarations, part properties, and generalization relationships so that
-engineers can quickly visualize their system decomposition.
+block declarations, part properties, generalization relationships, and the
+"item"/"port" constructs produced by BusbySim so that engineers can quickly
+visualize their system decomposition.
 
 Example usage:
 
@@ -44,6 +45,22 @@ _EXTENDS_PATTERN = re.compile(
     r"extends\s+([A-Za-z_][A-Za-z0-9_]*)",
     re.MULTILINE,
 )
+_ITEM_DEF_PATTERN = re.compile(
+    r"(?:item|block)\s+def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{(?P<body>[\s\S]*?)\}",
+    re.MULTILINE,
+)
+_PART_BLOCK_PATTERN = re.compile(
+    r"part\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{(?P<body>[\s\S]*?)\}",
+    re.MULTILINE,
+)
+_PORT_HEADER_PATTERN = re.compile(
+    r"port\s+([A-Za-z_][A-Za-z0-9_]*)",
+    re.MULTILINE,
+)
+_DEFINED_BY_PATTERN = re.compile(
+    r"defined\s+by\s+([A-Za-z_][A-Za-z0-9_]*)",
+    re.MULTILINE,
+)
 
 
 @dataclass
@@ -53,6 +70,46 @@ class BlockDefinition:
     name: str
     parts: List[Tuple[str, str]] = field(default_factory=list)  # (part_name, type)
     bases: List[str] = field(default_factory=list)
+
+
+def _extract_brace_block(text: str, start: int) -> Tuple[str, int]:
+    """Return the contents enclosed in braces starting at ``start``."""
+
+    length = len(text)
+    idx = start
+    while idx < length and text[idx].isspace():
+        idx += 1
+    if idx >= length or text[idx] != "{":
+        return "", idx
+
+    depth = 0
+    body_start = idx + 1
+    for pos in range(idx, length):
+        char = text[pos]
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return text[body_start:pos], pos + 1
+    return text[body_start:], length
+
+
+def _iter_port_definitions(part_body: str) -> Iterable[Tuple[str, str]]:
+    """Yield (port_name, defined_type) pairs from a part block body."""
+
+    pos = 0
+    while True:
+        match = _PORT_HEADER_PATTERN.search(part_body, pos)
+        if not match:
+            break
+        port_name = match.group(1)
+        block_body, next_pos = _extract_brace_block(part_body, match.end())
+        if block_body:
+            defined_by = _DEFINED_BY_PATTERN.search(block_body)
+            if defined_by:
+                yield port_name, defined_by.group(1)
+        pos = max(next_pos, match.end())
 
 
 def parse_sysmlv2(source: str) -> Dict[str, BlockDefinition]:
@@ -74,6 +131,20 @@ def parse_sysmlv2(source: str) -> Dict[str, BlockDefinition]:
         ]
         bases = list(_EXTENDS_PATTERN.findall(body))
         blocks[name] = BlockDefinition(name=name, parts=parts, bases=bases)
+
+    for match in _ITEM_DEF_PATTERN.finditer(source):
+        name = match.group(1)
+        blocks.setdefault(name, BlockDefinition(name=name))
+
+    for match in _PART_BLOCK_PATTERN.finditer(source):
+        name = match.group(1)
+        body = match.group("body")
+        block = blocks.get(name)
+        if not block:
+            block = BlockDefinition(name=name)
+            blocks[name] = block
+        for port_name, defined_type in _iter_port_definitions(body):
+            block.parts.append((port_name, defined_type))
 
     return blocks
 
