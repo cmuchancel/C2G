@@ -58,6 +58,26 @@ Copy code
 SYSON_BASE_URL=https://localhost:8443 \
 SYSON_VERIFY_TLS=false \
 python3 export_syson.py
+
+### 📈 Generate Diagrams from SysML v2 Text
+
+After exporting a project you can visualize block relationships directly from
+the SysML v2 source. The `diagram_generator.py` tool accepts either a local
+file or data piped from STDIN and produces a Graphviz diagram (DOT by default,
+PNG/SVG when Graphviz is installed).
+
+```bash
+python3 diagram_generator.py --input path/to/model.sysml --diagram block \
+    --output diagrams/model.dot
+
+# Render SVG directly when Graphviz is available
+python3 diagram_generator.py --input model.sysml --format svg
+```
+
+The parser currently supports a pragmatic subset of SysML v2: `block`
+declarations, `part` properties, and `extends` relationships. Unsupported
+constructs are safely ignored, ensuring the tool remains useful even with
+partial models.
 🧱 Architecture Overview
 css
 Copy code
