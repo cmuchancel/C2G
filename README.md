@@ -54,3 +54,13 @@ python3 diagram_generator.py --input test.sysml --svg-output light_switch.svg > 
 ```
 
 Open the SVG in a browser to inspect the nested panels for packages, parts, ports, and states. Unsupported constructs are ignored gracefully so the tool remains useful even with partial models.
+
+## Test command
+
+Run the bundled regression check to render `test.sysml` into both SVG and DOT outputs in one step:
+
+```bash
+./run_test.sh
+```
+
+The script exits with a non-zero status if either artifact cannot be written, making it suitable for quick smoke testing.
