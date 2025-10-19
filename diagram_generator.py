@@ -652,27 +652,48 @@ def build_dot_graph(model: SysMLModel, diagram_type: str) -> str:
     return _build_block_graph(model.blocks, diagram_type)
 
 
-_CHAR_WIDTH = 7.2
-_LINE_HEIGHT = 18.0
-_TITLE_FONT_SIZE = 16
+_CHAR_WIDTH = 7.4
+_LINE_HEIGHT = 22.0
+_TITLE_FONT_SIZE = 20
+_TYPE_FONT_SIZE = 13
 _BODY_FONT_SIZE = 13
-_HEADER_HEIGHT = 28.0
-_BOX_PADDING_X = 14.0
-_BOX_PADDING_Y = 10.0
-_CHILD_GAP = 12.0
-_CANVAS_PADDING = 24.0
-_SECTION_GAP = 36.0
-_MIN_BOX_WIDTH = 160.0
+_HEADER_HEIGHT = 64.0
+_BOX_PADDING_X = 20.0
+_BOX_PADDING_Y = 18.0
+_CHILD_GAP = 14.0
+_CANVAS_PADDING = 76.0
+_SECTION_GAP = 48.0
+_MIN_BOX_WIDTH = 180.0
+_CARD_BASE_INSET = 8.0
+_CARD_BASE_FILL = "#f4ede1"
+_CARD_BASE_BORDER = "#e4d7c3"
+_TYPE_CHIP_HEIGHT = 32.0
+_TYPE_CHIP_RADIUS = 14.0
+_TYPE_CHIP_FILL = "#fff6e8"
+_TYPE_CHIP_TEXT_COLOR = "#7a6952"
+_NAME_TEXT_COLOR = "#2f2a3a"
+_BODY_TEXT_COLOR = "#403c4f"
 
 _STYLE_MAP: Dict[str, Tuple[str, str, str]] = {
-    "package": ("#f4b266", "#e0a458", "#fff7ed"),
-    "part": ("#8c9eff", "#6c7ae0", "#f5f7ff"),
-    "port": ("#7dd1c1", "#51a58b", "#f0fbf7"),
-    "item": ("#ffd37f", "#f4a261", "#fff7e6"),
-    "action": ("#ffb997", "#f4876d", "#fff1eb"),
-    "state": ("#c8a6ff", "#8e6edc", "#f9f5ff"),
-    "attribute": ("#ffeaa7", "#f6b93b", "#fffaf0"),
-    "generic": ("#2f3b52", "#2f3b52", "#ffffff"),
+    "package": ("#f3d9a4", "#d6b46a", "#fdf8ee"),
+    "part": ("#d4e2ff", "#9fb7f0", "#f4f7ff"),
+    "port": ("#d3f2df", "#91c7a7", "#f1fbf6"),
+    "item": ("#ffe7c5", "#eab985", "#fff7e9"),
+    "action": ("#ffd7c8", "#f4a484", "#fff1eb"),
+    "state": ("#e5defc", "#b6a4f6", "#f7f4ff"),
+    "attribute": ("#f8e5c8", "#d8b689", "#fff6e8"),
+    "generic": ("#dce1ec", "#aab4c5", "#f9fafc"),
+}
+
+_EMOJI_MAP: Dict[str, str] = {
+    "package": "📦",
+    "part": "🧩",
+    "port": "🔌",
+    "item": "🧺",
+    "action": "⚙️",
+    "state": "🌀",
+    "attribute": "🧬",
+    "generic": "📄",
 }
 
 
@@ -682,6 +703,21 @@ def _style_for(box: Box) -> Tuple[str, str, str]:
 
 def _text_width(text: str) -> float:
     return max(len(text), 1) * _CHAR_WIDTH
+
+
+def _emoji_for(box: Box) -> str:
+    return _EMOJI_MAP.get(box.kind, _EMOJI_MAP["generic"])
+
+
+def _split_title(title: str) -> Tuple[str, str]:
+    normalized = title.strip()
+    for prefix in ("action def ", "item def "):
+        if normalized.startswith(prefix):
+            return prefix.strip(), normalized[len(prefix) :]
+    parts = normalized.split(" ", 1)
+    if len(parts) == 1:
+        return parts[0], ""
+    return parts[0], parts[1]
 
 
 def _attribute_to_box(attr: Attribute) -> Box:
@@ -728,7 +764,7 @@ def _action_to_box(action: ActionDefinition) -> Box:
     body_lines = [segment.strip() for segment in action.body.splitlines() if segment.strip()]
     if not body_lines:
         body_lines = ['<empty>']
-    return Box(title=f"action {action.name}", lines=body_lines, kind="action")
+    return Box(title=f"action def {action.name}", lines=body_lines, kind="action")
 
 
 def _state_to_box(state: State) -> Box:
@@ -754,7 +790,7 @@ def _part_to_box(part: PartDefinition) -> Box:
 
 def _item_to_box(item: ItemDefinition) -> Box:
     children = [_attribute_to_box(attr) for attr in item.attributes]
-    return Box(title=f"item {item.name}", children=children, kind="item")
+    return Box(title=f"item def {item.name}", children=children, kind="item")
 
 
 def _package_to_box(package: Package) -> Box:
@@ -836,40 +872,87 @@ def _layout_box(box: Box) -> LayoutResult:
 
 def _render_box(layout: LayoutResult, origin_x: float, origin_y: float, elements: List[str]) -> None:
     header_fill, border_color, body_fill = _style_for(layout.box)
-    shadow_offset = 3.0
-    elements.append(
-        f"<rect x=\"{origin_x + shadow_offset:.1f}\" y=\"{origin_y + shadow_offset:.1f}\" "
-        f"width=\"{layout.width:.1f}\" height=\"{layout.height:.1f}\" rx=\"8\" ry=\"8\" "
-        "fill=\"#0f1d2d\" opacity=\"0.08\" />"
+    emoji = _emoji_for(layout.box)
+    type_text, name_text = _split_title(layout.box.title)
+    normalized_type = type_text.upper()
+    type_label = f"{emoji} {normalized_type}".strip()
+    name_label = name_text.strip()
+
+    panel: List[str] = []
+    base_x = origin_x - _CARD_BASE_INSET
+    base_y = origin_y - _CARD_BASE_INSET
+    base_width = layout.width + 2 * _CARD_BASE_INSET
+    base_height = layout.height + 2 * _CARD_BASE_INSET
+    panel.append(
+        f"<rect x=\"{base_x:.1f}\" y=\"{base_y:.1f}\" width=\"{base_width:.1f}\" "
+        f"height=\"{base_height:.1f}\" rx=\"22\" ry=\"22\" fill=\"{_CARD_BASE_FILL}\" "
+        f"stroke=\"{_CARD_BASE_BORDER}\" stroke-width=\"1.2\" />"
     )
-    rect_attrs = (
-        f"x=\"{origin_x:.1f}\" y=\"{origin_y:.1f}\" width=\"{layout.width:.1f}\" "
-        f"height=\"{layout.height:.1f}\" rx=\"8\" ry=\"8\""
-    )
-    elements.append(
-        f"<rect {rect_attrs} fill=\"{body_fill}\" stroke=\"{border_color}\" stroke-width=\"1.6\" />"
-    )
-    elements.append(
+    panel.append(
         f"<rect x=\"{origin_x:.1f}\" y=\"{origin_y:.1f}\" width=\"{layout.width:.1f}\" "
-        f"height=\"{_HEADER_HEIGHT:.1f}\" rx=\"8\" ry=\"8\" fill=\"{header_fill}\" stroke=\"none\" />"
+        f"height=\"{layout.height:.1f}\" rx=\"18\" ry=\"18\" fill=\"{body_fill}\" "
+        f"stroke=\"{border_color}\" stroke-width=\"1.4\" />"
     )
-    title_y = origin_y + _HEADER_HEIGHT / 2 + _TITLE_FONT_SIZE / 2 - 2
-    elements.append(
-        '<text '
-        f"x=\"{origin_x + _BOX_PADDING_X:.1f}\" y=\"{title_y:.1f}\" "
-        f"font-family=\"Helvetica\" font-size=\"{_TITLE_FONT_SIZE}\" fill=\"#ffffff\">"
-        f"{html.escape(layout.box.title)}</text>"
+    panel.append(
+        f"<path d=\"M {origin_x:.1f},{origin_y + _HEADER_HEIGHT:.1f} "
+        f"L {origin_x:.1f},{origin_y + 18:.1f} Q {origin_x:.1f},{origin_y:.1f} {origin_x + 18:.1f},{origin_y:.1f} "
+        f"L {origin_x + layout.width - 18:.1f},{origin_y:.1f} Q {origin_x + layout.width:.1f},{origin_y:.1f} "
+        f"{origin_x + layout.width:.1f},{origin_y + 18:.1f} "
+        f"L {origin_x + layout.width:.1f},{origin_y + _HEADER_HEIGHT:.1f} Z\" fill=\"{header_fill}\" />"
+    )
+    panel.append(
+        f"<line x1=\"{origin_x + 18:.1f}\" y1=\"{origin_y + _HEADER_HEIGHT:.1f}\" "
+        f"x2=\"{origin_x + layout.width - 18:.1f}\" y2=\"{origin_y + _HEADER_HEIGHT:.1f}\" "
+        f"stroke=\"{border_color}\" stroke-width=\"1.0\" stroke-opacity=\"0.35\" />"
     )
 
-    text_y = origin_y + _HEADER_HEIGHT + _BOX_PADDING_Y + _BODY_FONT_SIZE
-    for line in layout.box.lines:
-        elements.append(
+    text_x = origin_x + _BOX_PADDING_X
+    font_stack = "'DM Sans', 'Inter', 'Segoe UI', sans-serif"
+
+    chip_padding_x = 18.0
+    chip_width = max(_text_width(type_label) + 2 * chip_padding_x, 112.0)
+    chip_x = text_x
+    chip_y = origin_y + 18.0
+    chip_text_y = chip_y + _TYPE_CHIP_HEIGHT / 2 + _TYPE_FONT_SIZE / 2 - 3.0
+    panel.append(
+        f"<rect x=\"{chip_x:.1f}\" y=\"{chip_y:.1f}\" width=\"{chip_width:.1f}\" "
+        f"height=\"{_TYPE_CHIP_HEIGHT:.1f}\" rx=\"{_TYPE_CHIP_RADIUS:.1f}\" ry=\"{_TYPE_CHIP_RADIUS:.1f}\" "
+        f"fill=\"{_TYPE_CHIP_FILL}\" stroke=\"{border_color}\" stroke-width=\"1.0\" stroke-opacity=\"0.55\" />"
+    )
+    panel.append(
+        '<text '
+        f"x=\"{chip_x + chip_width / 2:.1f}\" y=\"{chip_text_y:.1f}\" font-family=\"{font_stack}\" "
+        "font-size=\"{0}\" fill=\"{1}\" font-weight=\"600\" letter-spacing=\"0.6\" text-anchor=\"middle\">".format(
+            _TYPE_FONT_SIZE,
+            _TYPE_CHIP_TEXT_COLOR,
+        )
+        + f"{html.escape(type_label)}" + "</text>"
+    )
+    if name_label:
+        name_y = chip_y + _TYPE_CHIP_HEIGHT + 26.0
+        panel.append(
             '<text '
-            f"x=\"{origin_x + _BOX_PADDING_X:.1f}\" y=\"{text_y:.1f}\" "
-            f"font-family=\"Helvetica\" font-size=\"{_BODY_FONT_SIZE}\" fill=\"#24344d\">"
-            f"{html.escape(line)}</text>"
+            f"x=\"{text_x:.1f}\" y=\"{name_y:.1f}\" font-family=\"{font_stack}\" "
+            f"font-size=\"{_TITLE_FONT_SIZE}\" fill=\"{_NAME_TEXT_COLOR}\" font-weight=\"600\">"
+            f"{html.escape(name_label)}</text>"
+        )
+
+    text_y = origin_y + _HEADER_HEIGHT + _BOX_PADDING_Y + 6.0
+    for line in layout.box.lines:
+        display_line = line
+        if display_line and not display_line.startswith("<") and not display_line.startswith("•"):
+            display_line = f"• {display_line}"
+        panel.append(
+            '<text '
+            f"x=\"{text_x:.1f}\" y=\"{text_y:.1f}\" font-family=\"{font_stack}\" "
+            f"font-size=\"{_BODY_FONT_SIZE}\" fill=\"{_BODY_TEXT_COLOR}\">"
+            f"{html.escape(display_line)}</text>"
         )
         text_y += _LINE_HEIGHT
+
+    elements.append('<g filter="url(#panelShadow)">')
+    elements.extend(panel)
+    elements.append('</g>')
 
     for child_layout, child_x, child_y in layout.child_layouts:
         _render_box(child_layout, origin_x + child_x, origin_y + child_y, elements)
@@ -940,7 +1023,7 @@ def _render_state_connections(layout: LayoutResult, origin_x: float, origin_y: f
         circle_cy = origin_y + _HEADER_HEIGHT + _BOX_PADDING_Y + radius + 2.0
         elements.append(
             f"<circle cx=\"{circle_cx:.1f}\" cy=\"{circle_cy:.1f}\" r=\"{radius:.1f}\" "
-            "fill=\"#6fcf97\" stroke=\"#2f8f6b\" stroke-width=\"1.6\" />"
+            "fill=\"#5ad39b\" stroke=\"#2f8f6b\" stroke-width=\"1.6\" />"
         )
         anchors["initial"] = NodeAnchor(
             center_x=circle_cx,
@@ -959,7 +1042,7 @@ def _render_state_connections(layout: LayoutResult, origin_x: float, origin_y: f
         start_point, end_point = _connection_points(start_anchor, end_anchor)
         path_d = _curve_path(start_point, end_point)
         elements.append(
-            f"<path d=\"{path_d}\" fill=\"none\" stroke=\"#42526e\" "
+            f"<path d=\"{path_d}\" fill=\"none\" stroke=\"#7a879c\" "
             "stroke-width=\"2.0\" marker-end=\"url(#arrowhead)\" />"
         )
         label = transition.guard or transition.name
@@ -975,13 +1058,15 @@ def _render_state_connections(layout: LayoutResult, origin_x: float, origin_y: f
             elements.append(
                 '<text '
                 f"x=\"{label_x:.1f}\" y=\"{label_y:.1f}\" "
-                "font-family=\"Helvetica\" font-size=\"12\" fill=\"#42526e\" text-anchor=\"middle\">"
+                "font-family=\"'DM Sans', 'Inter', 'Segoe UI', sans-serif\" font-size=\"12\" "
+                "fill=\"#5f677a\" text-anchor=\"middle\">"
                 f"{html.escape(label.strip())}</text>"
             )
 
 
 def build_svg_diagram(model: SysMLModel, diagram_type: str) -> str:
     boxes: List[Box] = []
+    diagram_label: Optional[str] = None
     if model.packages:
         for package in model.packages:
             boxes.append(_package_to_box(package))
@@ -991,6 +1076,10 @@ def build_svg_diagram(model: SysMLModel, diagram_type: str) -> str:
             boxes.append(Box(title=f"block {block.name}", lines=lines or ['<no parts>'], kind="generic"))
     else:
         boxes.append(Box(title='SysML Diagram', lines=['<empty model>'], kind="generic"))
+
+    if boxes:
+        type_part, name_part = _split_title(boxes[0].title)
+        diagram_label = name_part or type_part
 
     layouts = [_layout_box(box) for box in boxes]
     total_width = max((layout.width for layout in layouts), default=_MIN_BOX_WIDTH) + 2 * _CANVAS_PADDING
@@ -1006,13 +1095,42 @@ def build_svg_diagram(model: SysMLModel, diagram_type: str) -> str:
     elements: List[str] = [
         f"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{total_width:.1f}\" height=\"{total_height:.1f}\" "
         "viewBox=\"0 0 {0:.1f} {1:.1f}\">".format(total_width, total_height),
-        "<defs>"
-        '<marker id="arrowhead" markerWidth="12" markerHeight="8" refX="10" refY="4" orient="auto" markerUnits="strokeWidth">'
-        '<path d="M0,0 L10,4 L0,8 z" fill="#42526e" />'
-        "</marker>"
+        "<defs>",
+        '<filter id="panelShadow" x="-12%" y="-12%" width="140%" height="160%">',
+        '<feGaussianBlur in="SourceAlpha" stdDeviation="6" result="shadow"/>',
+        '<feOffset in="shadow" dx="0" dy="6" result="offsetShadow"/>',
+        '<feColorMatrix in="offsetShadow" type="matrix" values="0 0 0 0 0.18  0 0 0 0 0.16  0 0 0 0 0.12  0 0 0 0.25 0" result="shadowColor"/>',
+        '<feMerge><feMergeNode in="shadowColor"/><feMergeNode in="SourceGraphic"/></feMerge>',
+        '</filter>',
+        '<marker id="arrowhead" markerWidth="12" markerHeight="8" refX="10" refY="4" orient="auto" markerUnits="strokeWidth">',
+        '<path d="M0,0 L10,4 L0,8 z" fill="#7a879c" />',
+        "</marker>",
         "</defs>",
-        "<rect x=\"0\" y=\"0\" width=\"{0:.1f}\" height=\"{1:.1f}\" fill=\"#f5f6fa\"/>".format(total_width, total_height),
+        "<rect x=\"0\" y=\"0\" width=\"{0:.1f}\" height=\"{1:.1f}\" fill=\"#fbf8f2\"/>".format(total_width, total_height),
     ]
+
+    if diagram_label:
+        label_text = f"🧭 {diagram_label}"
+        label_padding_x = 28.0
+        label_height = 54.0
+        label_font_size = 22
+        label_text_width = max(len(label_text), 1) * 11.5
+        label_width = label_text_width + 2 * label_padding_x
+        label_x = 36.0
+        label_y = 26.0
+        label_text_x = label_x + label_padding_x
+        label_text_y = label_y + label_height / 2 + label_font_size / 2 - 6.0
+        elements.append('<g filter="url(#panelShadow)">')
+        elements.append(
+            f"<rect x=\"{label_x:.1f}\" y=\"{label_y:.1f}\" width=\"{label_width:.1f}\" height=\"{label_height:.1f}\" "
+            "rx=\"27\" ry=\"27\" fill=\"#ffffff\" stroke=\"#d9cbb6\" stroke-width=\"1.2\" />"
+        )
+        elements.append(
+            '<text '
+            f"x=\"{label_text_x:.1f}\" y=\"{label_text_y:.1f}\" font-family=\"'DM Sans', 'Inter', 'Segoe UI', sans-serif\" "
+            f"font-size=\"{label_font_size}\" fill=\"#5a5143\" font-weight=\"600\">{html.escape(label_text)}</text>"
+        )
+        elements.append('</g>')
 
     for layout, origin_x, origin_y in origins:
         _render_box(layout, origin_x, origin_y, elements)
