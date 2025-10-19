@@ -122,6 +122,8 @@ class Box:
     title: str
     lines: List[str] = field(default_factory=list)
     children: List["Box"] = field(default_factory=list)
+    kind: str = "generic"
+    state: Optional[State] = None
 
 
 def _strip_comments(text: str) -> str:
@@ -662,72 +664,108 @@ _CANVAS_PADDING = 24.0
 _SECTION_GAP = 36.0
 _MIN_BOX_WIDTH = 160.0
 
+_STYLE_MAP: Dict[str, Tuple[str, str, str]] = {
+    "package": ("#f4b266", "#e0a458", "#fff7ed"),
+    "part": ("#8c9eff", "#6c7ae0", "#f5f7ff"),
+    "port": ("#7dd1c1", "#51a58b", "#f0fbf7"),
+    "item": ("#ffd37f", "#f4a261", "#fff7e6"),
+    "action": ("#ffb997", "#f4876d", "#fff1eb"),
+    "state": ("#c8a6ff", "#8e6edc", "#f9f5ff"),
+    "attribute": ("#ffeaa7", "#f6b93b", "#fffaf0"),
+    "generic": ("#2f3b52", "#2f3b52", "#ffffff"),
+}
+
+
+def _style_for(box: Box) -> Tuple[str, str, str]:
+    return _STYLE_MAP.get(box.kind, _STYLE_MAP["generic"])
+
 
 def _text_width(text: str) -> float:
     return max(len(text), 1) * _CHAR_WIDTH
 
 
-def _format_attributes(attrs: List[Attribute]) -> List[str]:
-    return [attr.summary() for attr in attrs]
+def _attribute_to_box(attr: Attribute) -> Box:
+    lines: List[str] = []
+    if attr.operator and attr.value is not None:
+        lines.append(f"{attr.operator} {attr.value.strip()}")
+    return Box(title=f"attribute {attr.name}", lines=lines, kind="attribute")
 
 
 def _port_to_box(port: Port) -> Box:
     lines: List[str] = []
-    if port.direction or port.item_name:
-        descriptor = ' '.join(filter(None, [port.direction, port.item_name]))
+    descriptor_parts = []
+    if port.direction:
+        descriptor_parts.append(port.direction)
+    if port.item_name:
+        descriptor_parts.append("item")
+        descriptor_parts.append(port.item_name)
+    descriptor = " ".join(descriptor_parts)
+    if descriptor:
         lines.append(descriptor)
-    if port.item_type:
-        lines.append(f"defined by {port.item_type}")
-    lines.extend(_format_attributes(port.attributes))
-    return Box(title=f"port {port.name}", lines=lines)
+    children: List[Box] = []
+    if port.item_type or port.attributes:
+        item_title_parts = ["item"]
+        if port.item_name:
+            item_title_parts.append(port.item_name)
+        item_lines: List[str] = []
+        if port.item_type:
+            item_lines.append(f"defined by {port.item_type}")
+        item_children = [_attribute_to_box(attr) for attr in port.attributes]
+        children.append(
+            Box(
+                title=" ".join(item_title_parts),
+                lines=item_lines,
+                children=item_children,
+                kind="item",
+            )
+        )
+    else:
+        children.extend(_attribute_to_box(attr) for attr in port.attributes)
+    return Box(title=f"port {port.name}", lines=lines, children=children, kind="port")
 
 
 def _action_to_box(action: ActionDefinition) -> Box:
     body_lines = [segment.strip() for segment in action.body.splitlines() if segment.strip()]
     if not body_lines:
         body_lines = ['<empty>']
-    return Box(title=f"action {action.name}", lines=body_lines)
+    return Box(title=f"action {action.name}", lines=body_lines, kind="action")
 
 
 def _state_to_box(state: State) -> Box:
     lines: List[str] = []
     for entry in state.entries:
         lines.append(f"entry {entry}")
-    for transition in state.transitions:
-        pieces = []
-        if transition.name:
-            pieces.append(f"{transition.name}:")
-        pieces.append(f"{transition.source} -> {transition.target}")
-        if transition.guard:
-            pieces.append(f"[{transition.guard}]")
-        lines.append(' '.join(pieces))
     children = [_state_to_box(sub) for sub in state.substates]
-    return Box(title=f"state {state.name}", lines=lines, children=children)
+    return Box(title=f"state {state.name}", lines=lines, children=children, kind="state", state=state)
 
 
 def _part_to_box(part: PartDefinition) -> Box:
-    lines = _format_attributes(part.attributes)
     children: List[Box] = []
+    for attr in part.attributes:
+        children.append(_attribute_to_box(attr))
     for port in part.ports:
         children.append(_port_to_box(port))
     for action in part.actions:
         children.append(_action_to_box(action))
     for state in part.states:
         children.append(_state_to_box(state))
-    return Box(title=f"part {part.name}", lines=lines, children=children)
+    return Box(title=f"part {part.name}", children=children, kind="part")
 
 
 def _item_to_box(item: ItemDefinition) -> Box:
-    return Box(title=f"item {item.name}", lines=_format_attributes(item.attributes))
+    children = [_attribute_to_box(attr) for attr in item.attributes]
+    return Box(title=f"item {item.name}", children=children, kind="item")
 
 
 def _package_to_box(package: Package) -> Box:
     children: List[Box] = []
+    for attr in package.attributes:
+        children.append(_attribute_to_box(attr))
     for item in package.items:
         children.append(_item_to_box(item))
     for part in package.parts:
         children.append(_part_to_box(part))
-    return Box(title=f"package {package.name}", lines=_format_attributes(package.attributes), children=children)
+    return Box(title=f"package {package.name}", children=children, kind="package")
 
 
 @dataclass
@@ -736,6 +774,22 @@ class LayoutResult:
     width: float
     height: float
     child_layouts: List[Tuple['LayoutResult', float, float]] = field(default_factory=list)
+    state_info: Optional['StateLayoutInfo'] = None
+
+
+@dataclass
+class StateLayoutInfo:
+    state: State
+
+
+@dataclass
+class NodeAnchor:
+    center_x: float
+    center_y: float
+    left: float
+    right: float
+    top: float
+    bottom: float
 
 
 def _layout_box(box: Box) -> LayoutResult:
@@ -767,20 +821,37 @@ def _layout_box(box: Box) -> LayoutResult:
         base_height = max(base_height, current_y)
     height = max(base_height + _BOX_PADDING_Y, _HEADER_HEIGHT + 2 * _BOX_PADDING_Y + max(line_area_height, _LINE_HEIGHT))
 
-    return LayoutResult(box=box, width=width, height=height, child_layouts=child_positions)
+    state_info: Optional[StateLayoutInfo] = None
+    if box.state is not None:
+        state_info = StateLayoutInfo(state=box.state)
+
+    return LayoutResult(
+        box=box,
+        width=width,
+        height=height,
+        child_layouts=child_positions,
+        state_info=state_info,
+    )
 
 
 def _render_box(layout: LayoutResult, origin_x: float, origin_y: float, elements: List[str]) -> None:
+    header_fill, border_color, body_fill = _style_for(layout.box)
+    shadow_offset = 3.0
+    elements.append(
+        f"<rect x=\"{origin_x + shadow_offset:.1f}\" y=\"{origin_y + shadow_offset:.1f}\" "
+        f"width=\"{layout.width:.1f}\" height=\"{layout.height:.1f}\" rx=\"8\" ry=\"8\" "
+        "fill=\"#0f1d2d\" opacity=\"0.08\" />"
+    )
     rect_attrs = (
         f"x=\"{origin_x:.1f}\" y=\"{origin_y:.1f}\" width=\"{layout.width:.1f}\" "
-        f"height=\"{layout.height:.1f}\" rx=\"6\" ry=\"6\""
+        f"height=\"{layout.height:.1f}\" rx=\"8\" ry=\"8\""
     )
     elements.append(
-        f"<rect {rect_attrs} fill=\"#ffffff\" stroke=\"#333333\" stroke-width=\"1.4\" />"
+        f"<rect {rect_attrs} fill=\"{body_fill}\" stroke=\"{border_color}\" stroke-width=\"1.6\" />"
     )
     elements.append(
         f"<rect x=\"{origin_x:.1f}\" y=\"{origin_y:.1f}\" width=\"{layout.width:.1f}\" "
-        f"height=\"{_HEADER_HEIGHT:.1f}\" rx=\"6\" ry=\"6\" fill=\"#2f3b52\" />"
+        f"height=\"{_HEADER_HEIGHT:.1f}\" rx=\"8\" ry=\"8\" fill=\"{header_fill}\" stroke=\"none\" />"
     )
     title_y = origin_y + _HEADER_HEIGHT / 2 + _TITLE_FONT_SIZE / 2 - 2
     elements.append(
@@ -795,13 +866,118 @@ def _render_box(layout: LayoutResult, origin_x: float, origin_y: float, elements
         elements.append(
             '<text '
             f"x=\"{origin_x + _BOX_PADDING_X:.1f}\" y=\"{text_y:.1f}\" "
-            f"font-family=\"Helvetica\" font-size=\"{_BODY_FONT_SIZE}\" fill=\"#2f3b52\">"
+            f"font-family=\"Helvetica\" font-size=\"{_BODY_FONT_SIZE}\" fill=\"#24344d\">"
             f"{html.escape(line)}</text>"
         )
         text_y += _LINE_HEIGHT
 
     for child_layout, child_x, child_y in layout.child_layouts:
         _render_box(child_layout, origin_x + child_x, origin_y + child_y, elements)
+
+    if layout.state_info is not None:
+        _render_state_connections(layout, origin_x, origin_y, elements)
+
+
+def _connection_points(start: NodeAnchor, end: NodeAnchor) -> Tuple[Tuple[float, float], Tuple[float, float]]:
+    dx = end.center_x - start.center_x
+    dy = end.center_y - start.center_y
+    if abs(dx) > abs(dy):
+        sx = start.right if dx > 0 else start.left
+        sy = start.center_y
+        ex = end.left if dx > 0 else end.right
+        ey = end.center_y
+    else:
+        sx = start.center_x
+        sy = start.bottom if dy > 0 else start.top
+        ex = end.center_x
+        ey = end.top if dy > 0 else end.bottom
+    return (sx, sy), (ex, ey)
+
+
+def _curve_path(start: Tuple[float, float], end: Tuple[float, float]) -> str:
+    sx, sy = start
+    ex, ey = end
+    dx = ex - sx
+    dy = ey - sy
+    if abs(dx) < 1e-6 and abs(dy) < 1e-6:
+        dx = 1.0
+    if abs(dx) > abs(dy):
+        ctrl1 = (sx + dx * 0.4, sy)
+        ctrl2 = (ex - dx * 0.4, ey)
+    else:
+        ctrl1 = (sx, sy + dy * 0.4)
+        ctrl2 = (ex, ey - dy * 0.4)
+    return (
+        f"M {sx:.1f},{sy:.1f} C {ctrl1[0]:.1f},{ctrl1[1]:.1f} "
+        f"{ctrl2[0]:.1f},{ctrl2[1]:.1f} {ex:.1f},{ey:.1f}"
+    )
+
+
+def _render_state_connections(layout: LayoutResult, origin_x: float, origin_y: float, elements: List[str]) -> None:
+    assert layout.state_info is not None
+    state = layout.state_info.state
+    anchors: Dict[str, NodeAnchor] = {}
+
+    for child_layout, child_x, child_y in layout.child_layouts:
+        child_state = child_layout.box.state
+        if child_state is None:
+            continue
+        child_origin_x = origin_x + child_x
+        child_origin_y = origin_y + child_y
+        anchors[child_state.name] = NodeAnchor(
+            center_x=child_origin_x + child_layout.width / 2,
+            center_y=child_origin_y + child_layout.height / 2,
+            left=child_origin_x,
+            right=child_origin_x + child_layout.width,
+            top=child_origin_y,
+            bottom=child_origin_y + child_layout.height,
+        )
+
+    has_initial = any(transition.source.lower() == "initial" for transition in state.transitions)
+    if has_initial:
+        radius = 8.0
+        circle_cx = origin_x + _BOX_PADDING_X + radius + 6.0
+        circle_cy = origin_y + _HEADER_HEIGHT + _BOX_PADDING_Y + radius + 2.0
+        elements.append(
+            f"<circle cx=\"{circle_cx:.1f}\" cy=\"{circle_cy:.1f}\" r=\"{radius:.1f}\" "
+            "fill=\"#6fcf97\" stroke=\"#2f8f6b\" stroke-width=\"1.6\" />"
+        )
+        anchors["initial"] = NodeAnchor(
+            center_x=circle_cx,
+            center_y=circle_cy,
+            left=circle_cx - radius,
+            right=circle_cx + radius,
+            top=circle_cy - radius,
+            bottom=circle_cy + radius,
+        )
+
+    for transition in state.transitions:
+        start_anchor = anchors.get(transition.source)
+        end_anchor = anchors.get(transition.target)
+        if start_anchor is None or end_anchor is None:
+            continue
+        start_point, end_point = _connection_points(start_anchor, end_anchor)
+        path_d = _curve_path(start_point, end_point)
+        elements.append(
+            f"<path d=\"{path_d}\" fill=\"none\" stroke=\"#42526e\" "
+            "stroke-width=\"2.0\" marker-end=\"url(#arrowhead)\" />"
+        )
+        label = transition.guard or transition.name
+        if label:
+            label_x = (start_point[0] + end_point[0]) / 2
+            label_y_mid = (start_point[1] + end_point[1]) / 2
+            dx = end_point[0] - start_point[0]
+            dy = end_point[1] - start_point[1]
+            if abs(dx) <= abs(dy):
+                label_y = label_y_mid - 10 if dy >= 0 else label_y_mid + 18
+            else:
+                label_y = label_y_mid - 10 if dx >= 0 else label_y_mid + 18
+            elements.append(
+                '<text '
+                f"x=\"{label_x:.1f}\" y=\"{label_y:.1f}\" "
+                "font-family=\"Helvetica\" font-size=\"12\" fill=\"#42526e\" text-anchor=\"middle\">"
+                f"{html.escape(label.strip())}</text>"
+            )
 
 
 def build_svg_diagram(model: SysMLModel, diagram_type: str) -> str:
@@ -812,9 +988,9 @@ def build_svg_diagram(model: SysMLModel, diagram_type: str) -> str:
     elif model.blocks:
         for block in model.blocks.values():
             lines = [f"part {name} : {type_name}" for name, type_name in block.parts]
-            boxes.append(Box(title=f"block {block.name}", lines=lines or ['<no parts>']))
+            boxes.append(Box(title=f"block {block.name}", lines=lines or ['<no parts>'], kind="generic"))
     else:
-        boxes.append(Box(title='SysML Diagram', lines=['<empty model>']))
+        boxes.append(Box(title='SysML Diagram', lines=['<empty model>'], kind="generic"))
 
     layouts = [_layout_box(box) for box in boxes]
     total_width = max((layout.width for layout in layouts), default=_MIN_BOX_WIDTH) + 2 * _CANVAS_PADDING
@@ -830,6 +1006,11 @@ def build_svg_diagram(model: SysMLModel, diagram_type: str) -> str:
     elements: List[str] = [
         f"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{total_width:.1f}\" height=\"{total_height:.1f}\" "
         "viewBox=\"0 0 {0:.1f} {1:.1f}\">".format(total_width, total_height),
+        "<defs>"
+        '<marker id="arrowhead" markerWidth="12" markerHeight="8" refX="10" refY="4" orient="auto" markerUnits="strokeWidth">'
+        '<path d="M0,0 L10,4 L0,8 z" fill="#42526e" />'
+        "</marker>"
+        "</defs>",
         "<rect x=\"0\" y=\"0\" width=\"{0:.1f}\" height=\"{1:.1f}\" fill=\"#f5f6fa\"/>".format(total_width, total_height),
     ]
 

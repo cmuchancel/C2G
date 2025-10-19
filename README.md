@@ -4,6 +4,7 @@ A lightweight command-line tool that converts a subset of SysML v2 text into vis
 
 ## Features
 - Parses `package` bodies with attributes, BusbySim `item def` declarations, `part` blocks (including ports and actions), and `state` machines with transitions.
+- Mirrors the BusbySim visual language with colored headers, nested cards, and curved arrows (with guard labels) between state-machine nodes.
 - Keeps support for simple SysML v2 `block`/`part`/`extends` syntax used by legacy inputs.
 - Emits Graphviz DOT text and a fully self-contained SVG rendering without requiring the Graphviz CLI.
 - Accepts input from files or standard input for easy integration with other tooling.
